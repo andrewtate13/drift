@@ -724,15 +724,15 @@
       player.addListener('ready', function (d) { clearTimeout(to); speaker.state = 'ready'; speaker.id = d.device_id; toast('Drift is a Spotify speaker now', 4000); refreshPanel(); });
       player.addListener('not_ready', function () { speaker.state = 'offline'; refreshPanel(); });
       ['initialization_error', 'authentication_error', 'account_error'].forEach(function (ev) {
-        player.addListener(ev, function (e) { clearTimeout(to); speaker.state = 'fail'; speaker.msg = ev.replace('_', ' ') + ': ' + (e && e.message); console.warn(ev, e); refreshPanel(); });
+        player.addListener(ev, function (e) { clearTimeout(to); speaker.state = 'fail'; speaker.msg = ev.replace('_', ' ') + ': ' + (e && e.message); console.warn(ev, e); showHelp(30000); });
       });
       player.addListener('playback_error', function (e) {
         speaker.err = 'playback error: ' + (e && e.message); console.warn('playback_error', e);
-        toast('Speaker: ' + speaker.err.slice(0, 60), 6000); refreshPanel();
+        toast('Speaker: ' + speaker.err.slice(0, 60), 6000); showHelp(30000);
       });
       player.addListener('autoplay_failed', function () {
         speaker.err = 'browser blocked sound until a button press';
-        toast('Press any button on the remote to allow sound', 8000); refreshPanel();
+        toast('Press any button on the remote to allow sound', 8000); showHelp(30000);
       });
       player.addListener('player_state_changed', function () { schedulePoll(300); });
       player.connect().then(function (ok) { if (!ok) { speaker.state = 'fail'; speaker.msg = 'connect() refused'; } });
@@ -877,14 +877,12 @@
       : speaker.state === 'loading' ? 'starting…'
       : speaker.state === 'fail' ? 'not available here (' + speaker.msg + ')'
       : speaker.state === 'offline' ? 'offline' : (speaker.msg || 'off');
-    return '<div class="k">drift · remote</div><h1>Controls</h1><table>' +
-      '<tr><td>OK</td><td>play / pause</td></tr>' +
-      '<tr><td>◀ ▶</td><td>change scene (' + esc(SCENES[S.scene].name) + ')</td></tr>' +
-      '<tr><td>▲ ▼</td><td>brightness (' + Math.round(S.userDim * 100) + '%)</td></tr>' +
-      '<tr><td>RED</td><td>hide / show the card</td></tr>' +
-      '<tr><td>GREEN</td><td>lyrics on / off</td></tr>' +
-      '<tr><td>YELLOW · BLUE</td><td>previous · next track</td></tr>' +
-      '<tr><td>INFO</td><td>this help</td></tr></table>' +
+    return '<div class="k">drift · point and click</div><h1>Controls</h1>' +
+      '<div><span class="btn" data-act="prev">⏮ prev</span><span class="btn" data-act="play">' + (S.playing ? 'pause' : 'play') + '</span><span class="btn" data-act="next">next ⏭</span></div>' +
+      '<div><span class="btn" data-act="scene">scene: ' + esc(SCENES[S.switching ? S.pending : S.scene].name) + '</span><span class="btn" data-act="card">card ' + (S.showCard ? 'on' : 'off') + '</span><span class="btn" data-act="lyrics">lyrics ' + (S.showLyrics ? 'on' : 'off') + '</span></div>' +
+      '<table style="margin-top:.8em"><tr><td>OK</td><td>play / pause</td></tr>' +
+      '<tr><td>◀ ▶ · ▲ ▼</td><td>scene · brightness (' + Math.round(S.userDim * 100) + '%)</td></tr>' +
+      '<tr><td>CLICK</td><td>open / close this panel</td></tr></table>' +
       '<div class="m" style="margin-top:.8em">speaker: ' + esc(sp) +
       '<br>widevine: ' + esc(speaker.widevine) + (speaker.err ? '<br>last: ' + esc(speaker.err) : '') + '<br>render ' + Math.round(scale * 100) + '% · ' + Math.round(fpsNow) + ' fps' +
       (DEMO ? ' · demo mode' : '') + '</div>';
@@ -893,8 +891,18 @@
     setPanel('help', helpHTML());
     clearTimeout(panelT); panelT = setTimeout(function () { if (S.panel === 'help') setPanel(null, ''); }, ms || 12000);
   }
-  function refreshPanel() { if (S.panel === 'help') { panel.innerHTML = helpHTML(); } }
+  function refreshPanel() { if (S.panel === 'help') { panel.innerHTML = helpHTML(); sizes.panel = [panel.offsetWidth, panel.offsetHeight]; } }
+  function toggleCard() { S.showCard = !S.showCard; LS.set('card', S.showCard ? '1' : '0'); updateCardVis(); toast(S.showCard ? 'Card on' : 'Card off'); }
+  function toggleLyrics() { S.showLyrics = !S.showLyrics; LS.set('lyrics', S.showLyrics ? '1' : '0'); toast(S.showLyrics ? 'Lyrics on' : 'Lyrics off'); }
   function panelAct(act) {
+    if (S.panel === 'help') { clearTimeout(panelT); panelT = setTimeout(function () { if (S.panel === 'help') setPanel(null, ''); }, 20000); }
+    if (act === 'prev') skip(-1);
+    else if (act === 'next') skip(1);
+    else if (act === 'play') togglePlay();
+    else if (act === 'scene') goScene((S.switching ? S.pending : S.scene) + 1);
+    else if (act === 'card') toggleCard();
+    else if (act === 'lyrics') toggleLyrics();
+    if (/^(prev|next|play|scene|card|lyrics)$/.test(act)) { setTimeout(refreshPanel, 50); setTimeout(refreshPanel, 1500); return; }
     if (act === 'login') login();
     else if (act === 'demo') { location.href = REDIRECT + '?demo'; }
     else if (act === 'resend') { var ps = LS.get('pairsend'); if (ps && tok.refresh) sendPair(ps); else login(); }
@@ -944,8 +952,8 @@
       S.userDim = clamp(Math.round((S.userDim + (c === 38 ? 0.15 : -0.15)) * 100) / 100, 0.25, 1);
       LS.set('dim', S.userDim); toast('Brightness ' + Math.round(S.userDim * 100) + '%');
     }
-    else if (c === 403 || key === 'c') { S.showCard = !S.showCard; LS.set('card', S.showCard ? '1' : '0'); updateCardVis(); toast(S.showCard ? 'Card on' : 'Card off'); }
-    else if (c === 404 || key === 'l') { S.showLyrics = !S.showLyrics; LS.set('lyrics', S.showLyrics ? '1' : '0'); toast(S.showLyrics ? 'Lyrics on' : 'Lyrics off'); }
+    else if (c === 403 || key === 'c') toggleCard();
+    else if (c === 404 || key === 'l') toggleLyrics();
     else if (c === 405 || key === 'p' || c === 412) skip(-1);
     else if (c === 406 || key === 'n' || c === 417) skip(1);
     else if (c === 457 || key === 'h' || key === 'i') { if (S.panel === 'help') setPanel(null, ''); else showHelp(); }
@@ -959,7 +967,12 @@
     document.body.className = 'pointer'; clearTimeout(curT);
     curT = setTimeout(function () { document.body.className = ''; }, 3000);
   });
-  document.addEventListener('click', function () { onGesture(); });
+  // Magic Remote: pointer click anywhere opens/closes the control panel (newer remotes have no INFO/colour keys)
+  document.addEventListener('click', function () {
+    onGesture();
+    if (S.panel === 'setup') return;
+    if (S.panel === 'help') setPanel(null, ''); else showHelp(20000);
+  });
 
   /* ======================================================================
      Demo mode: invented tracks + generated covers (no Spotify needed)
