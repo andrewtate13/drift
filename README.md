@@ -15,7 +15,7 @@ Slow, dark, burn-in-safe visuals for whatever is playing on your Spotify account
    - APIs used: tick **Web API** and **Web Playback SDK**.
    - Save, then copy the **Client ID**, which goes into `CLIENT_ID` at the top of `index.html`.
    - Development mode allows 5 users, and the app owner needs Premium.
-2. **TV**: open the Web Browser app, go to the page, press OK on **Connect Spotify**, log in once. Pin the page to the home screen from the browser menu.
+2. **TV**: open the Web Browser app and go to the page. It shows a QR code: scan it with your phone and log in to Spotify there. The TV connects by itself (the login is handed over end-to-end encrypted via ntfy.sh; the key only exists in the QR code). Pin the page to the home screen from the browser menu.
 3. **Daily use**: open Drift on the TV. In Spotify on your phone, tap the speaker icon and pick **Drift** (or just play anywhere, and Drift mirrors it).
 
 Try it without Spotify: add `?demo` to the address. Log out / reset: add `?reset`.

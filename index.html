@@ -60,6 +60,15 @@
   #panel .btn.focus{border-color:var(--acc);color:var(--ink);background:rgba(150,110,210,.14)}
   #panel input{font:inherit;font-family:'JetBrains Mono',Menlo,monospace;font-size:.9vw;width:100%;box-sizing:border-box;margin-top:.6em;
     padding:.4em .6em;background:rgba(0,0,0,.6);color:var(--ink);border:1px solid rgba(170,150,210,.3);border-radius:.3em}
+  #panel .qrwrap{display:flex;align-items:center;margin:.9em 0 .3em}
+  #panel #qr{width:11vw;height:11vw;flex:none;margin-right:1.4vw;border-radius:.3vw;background:#b9b1c6;image-rendering:pixelated}
+  @media (max-width:820px){ /* phone, during the pairing hand-off */
+    #panel{width:88vw;font-size:4.2vw;padding:6vw}
+    #panel h1{font-size:11vw}
+    #panel .k{font-size:2.6vw}
+    #panel .m{font-size:3vw}
+    #panel .btn{padding:.5em 1.1em}
+  }
   #panel table{border-collapse:collapse;margin:.4em 0}
   #panel td{padding:.15em 1.2em .15em 0;color:var(--dim);vertical-align:top}
   #panel td:first-child{font-family:'JetBrains Mono',Menlo,monospace;font-size:.75vw;color:var(--faint);white-space:nowrap;padding-top:.35em}
@@ -756,11 +765,96 @@
       h += '<p>Paste your Spotify app’s Client ID:</p><input id="cidIn" class="mono" placeholder="client id" spellcheck="false">' +
         '<div class="m" style="margin-top:.8em">Redirect URI to add in the Spotify dashboard:<br>' + esc(REDIRECT) + '</div>' +
         '<span class="btn" data-act="savecid">Save</span><span class="btn" data-act="demo">Watch demo</span>';
+    } else if (!window.crypto || !crypto.subtle) {
+      h += '<span class="btn" data-act="login">Connect Spotify</span><span class="btn" data-act="demo">Watch demo</span>';
     } else {
-      h += '<span class="btn" data-act="login">Connect Spotify</span><span class="btn" data-act="demo">Watch demo</span>' +
-        '<div class="m" style="margin-top:1em;color:var(--faint)">redirect uri: ' + esc(REDIRECT) + '</div>';
+      h += '<div class="qrwrap"><canvas id="qr" width="33" height="33"></canvas>' +
+        '<div><p style="margin:0">Scan with your phone and log in to Spotify there. This screen connects by itself.</p>' +
+        '<div class="m" id="qrStatus" style="margin-top:.5em">waiting for your phone…</div></div></div>' +
+        '<span class="btn" data-act="login">Log in on this TV instead</span><span class="btn" data-act="demo">Watch demo</span>';
     }
     setPanel('setup', h);
+    if (cid && $('qr')) { drawPairQR(); startPairPolling(); }
+  }
+
+  /* ======================================================================
+     Phone pairing: the TV shows a QR code, the phone logs in to Spotify and
+     hands the tokens over, AES-encrypted, through a public relay (ntfy.sh).
+     The key only lives in the QR code, so the relay never sees the tokens.
+     ====================================================================== */
+  var RELAY = 'https://ntfy.sh/';
+  function alnum(n) { var cs = 'abcdefghijklmnopqrstuvwxyz0123456789', a = new Uint8Array(n), s = ''; crypto.getRandomValues(a); for (var i = 0; i < n; i++) s += cs[a[i] % cs.length]; return s; }
+  function unb64url(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+  function aesKey(keyStr, use) { return crypto.subtle.importKey('raw', unb64url(keyStr), { name: 'AES-GCM' }, false, [use]); }
+  function seal(keyStr, obj) {
+    var iv = crypto.getRandomValues(new Uint8Array(12));
+    return aesKey(keyStr, 'encrypt').then(function (k) { return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, new TextEncoder().encode(JSON.stringify(obj))); })
+      .then(function (ct) { return b64url(iv) + '.' + b64url(ct); });
+  }
+  function unseal(keyStr, msg) {
+    var p = msg.split('.');
+    return aesKey(keyStr, 'decrypt').then(function (k) { return crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64url(p[0]) }, k, unb64url(p[1])); })
+      .then(function (buf) { return JSON.parse(new TextDecoder().decode(buf)); });
+  }
+  function pairCode() {
+    var p = LS.get('pair');
+    if (!p) { p = alnum(24) + '.' + b64url(crypto.getRandomValues(new Uint8Array(16))); LS.set('pair', p); }
+    return p;
+  }
+  var qrLib = null;
+  function drawPairQR() {
+    var url = REDIRECT + '?pair=' + pairCode();
+    function draw() {
+      var c = $('qr'); if (!c || !window.qrcode) return;
+      var q = window.qrcode(0, 'M'); q.addData(url); q.make();
+      var n = q.getModuleCount(), m = 2; c.width = c.height = n + m * 2;
+      var x = c.getContext('2d'); x.fillStyle = '#b9b1c6'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#07050b';
+      for (var r = 0; r < n; r++) for (var cc = 0; cc < n; cc++) if (q.isDark(r, cc)) x.fillRect(cc + m, r + m, 1, 1);
+    }
+    if (window.qrcode) return draw();
+    if (!qrLib) {
+      qrLib = document.createElement('script');
+      qrLib.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js';
+      qrLib.onerror = function () { var s = $('qrStatus'); if (s) s.textContent = 'QR failed to load. Use "Log in on this TV".'; };
+      document.head.appendChild(qrLib);
+    }
+    qrLib.addEventListener('load', draw);
+  }
+  var pairTimer = null;
+  function stopPairPolling() { clearInterval(pairTimer); pairTimer = null; }
+  function startPairPolling() {
+    if (pairTimer) return;
+    var parts = pairCode().split('.'), busy = false;
+    pairTimer = setInterval(function () {
+      if (busy || S.panel !== 'setup') return;
+      busy = true;
+      fetch(RELAY + 'drift-' + parts[0] + '/json?poll=1').then(function (r) { return r.text(); }).then(function (txt) {
+        var lines = txt.trim().split('\n'), msg = null;
+        for (var i = lines.length - 1; i >= 0 && !msg; i--) { try { var m = JSON.parse(lines[i]); if (m.event === 'message' && m.message) msg = m.message; } catch (e) {} }
+        if (!msg) return;
+        return unseal(parts[1], msg).then(function (d) {
+          if (!d || !d.refresh) return;
+          stopPairPolling(); LS.del('pair');
+          saveTok({ access_token: d.access, refresh_token: d.refresh, expires_in: Math.max(60, Math.round((d.exp - Date.now()) / 1000)), scope: d.scope });
+          start(true);
+        });
+      }).catch(function () {}).then(function () { busy = false; });
+    }, 3000);
+  }
+  // phone side: after logging in, send the tokens to the TV and forget them here
+  function sendPair(pair) {
+    var parts = pair.split('.');
+    setPanel('setup', '<div class="k">drift · pairing</div><h1>Sending…</h1><p>Handing your login to the TV.</p>');
+    return seal(parts[1], { access: tok.access, refresh: tok.refresh, exp: tok.exp, scope: LS.get('scope') || '' })
+      .then(function (msg) { return fetch(RELAY + 'drift-' + parts[0], { method: 'POST', body: msg }); })
+      .then(function (r) {
+        if (!r.ok) throw new Error('relay said ' + r.status);
+        LS.del('pairsend'); logout();
+        setPanel('setup', '<div class="k">drift · pairing</div><h1>Done.</h1><p>Look at your TV, it connects within a few seconds. You can close this page.</p>');
+      })
+      .catch(function (e) {
+        setPanel('setup', '<div class="k">drift · pairing</div><h1>Hmm.</h1><p class="err">Could not reach the TV: ' + esc(e.message || e) + '</p><span class="btn" data-act="resend">Try again</span>');
+      });
   }
   function helpHTML() {
     var sp = speaker.state === 'ready' ? 'ready — pick “Drift” in Spotify on your phone'
@@ -786,6 +880,7 @@
   function panelAct(act) {
     if (act === 'login') login();
     else if (act === 'demo') { location.href = REDIRECT + '?demo'; }
+    else if (act === 'resend') { var ps = LS.get('pairsend'); if (ps && tok.refresh) sendPair(ps); else login(); }
     else if (act === 'savecid') {
       var v = ($('cidIn') && $('cidIn').value || '').trim();
       if (!/^[0-9a-f]{32}$/i.test(v)) { showSetup('That doesn’t look like a Client ID (32 letters/numbers).'); return; }
@@ -908,19 +1003,31 @@
 
   function boot() {
     if (DEMO) { demo.start(); showHelp(9000); return; }
-    var code = Q.get('code'), err = Q.get('error');
-    if (code || err || Q.has('cid') || Q.has('reset')) history.replaceState(null, '', REDIRECT);
-    if (err) { showSetup('Spotify said: ' + err); return; }
+    var code = Q.get('code'), err = Q.get('error'), pair = Q.get('pair');
+    if (code || err || pair || Q.has('cid') || Q.has('reset')) history.replaceState(null, '', REDIRECT);
+    if (pair && /^[a-z0-9]{24}\.[A-Za-z0-9_-]{22}$/.test(pair)) {
+      // phone arrived from the TV's QR code: log in to Spotify here, then hand over
+      LS.set('pairsend', pair);
+      setPanel('setup', '<div class="k">drift · pairing</div><h1>Hi, phone.</h1><p>Log in to Spotify and your TV connects by itself.</p>' +
+        '<span class="btn" data-act="login">Log in with Spotify</span>');
+      return;
+    }
+    if (err) { LS.del('pairsend'); showSetup('Spotify said: ' + err); return; }
     if (code) {
       if (Q.get('state') !== LS.get('state')) { showSetup('Login check failed (state mismatch). Try again.'); return; }
       tokenReq({ grant_type: 'authorization_code', code: code, redirect_uri: REDIRECT, client_id: cid, code_verifier: LS.get('pkce') || '' })
-        .then(function (d) { saveTok(d); LS.del('pkce'); LS.del('state'); start(true); })
+        .then(function (d) {
+          saveTok(d); LS.del('pkce'); LS.del('state');
+          var ps = LS.get('pairsend');
+          if (ps) sendPair(ps); else start(true);
+        })
         .catch(function (e) { showSetup('Login failed: ' + e.message); });
       return;
     }
     if (tok.refresh && cid) start(false); else showSetup();
   }
   function start(fresh) {
+    stopPairPolling();
     setPanel(null, '');
     poll();
     startSpeaker();
