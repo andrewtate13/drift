@@ -702,7 +702,16 @@
   }
 
   /* ---------- the page as a Spotify speaker (Web Playback SDK) ---------- */
-  var player = null, speaker = { state: 'off', msg: '', id: null };
+  var player = null, speaker = { state: 'off', msg: '', id: null, err: '', widevine: 'checking' };
+  // Spotify's player needs Widevine (EME) to decode audio. Check it so the help panel can say so.
+  (function () {
+    if (!navigator.requestMediaKeySystemAccess) { speaker.widevine = 'no EME API'; return; }
+    var base = { initDataTypes: ['cenc'], audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }] };
+    navigator.requestMediaKeySystemAccess('com.widevine.alpha', [base])
+      .then(function () { speaker.widevine = 'yes'; })
+      .catch(function (e) { speaker.widevine = 'no (' + String(e.message || e.name || e).slice(0, 50) + ')'; })
+      .then(refreshPanel);
+  })();
   function startSpeaker() {
     if (DEMO || !tok.refresh) return;
     if ((LS.get('scope') || '').indexOf('streaming') < 0) { speaker.state = 'off'; speaker.msg = 'log in again to enable'; return; }
@@ -717,7 +726,14 @@
       ['initialization_error', 'authentication_error', 'account_error'].forEach(function (ev) {
         player.addListener(ev, function (e) { clearTimeout(to); speaker.state = 'fail'; speaker.msg = ev.replace('_', ' ') + ': ' + (e && e.message); console.warn(ev, e); refreshPanel(); });
       });
-      player.addListener('playback_error', function (e) { console.warn('playback_error', e); });
+      player.addListener('playback_error', function (e) {
+        speaker.err = 'playback error: ' + (e && e.message); console.warn('playback_error', e);
+        toast('Speaker: ' + speaker.err.slice(0, 60), 6000); refreshPanel();
+      });
+      player.addListener('autoplay_failed', function () {
+        speaker.err = 'browser blocked sound until a button press';
+        toast('Press any button on the remote to allow sound', 8000); refreshPanel();
+      });
       player.addListener('player_state_changed', function () { schedulePoll(300); });
       player.connect().then(function (ok) { if (!ok) { speaker.state = 'fail'; speaker.msg = 'connect() refused'; } });
     };
@@ -869,7 +885,8 @@
       '<tr><td>GREEN</td><td>lyrics on / off</td></tr>' +
       '<tr><td>YELLOW · BLUE</td><td>previous · next track</td></tr>' +
       '<tr><td>INFO</td><td>this help</td></tr></table>' +
-      '<div class="m" style="margin-top:.8em">speaker: ' + esc(sp) + '<br>render ' + Math.round(scale * 100) + '% · ' + Math.round(fpsNow) + ' fps' +
+      '<div class="m" style="margin-top:.8em">speaker: ' + esc(sp) +
+      '<br>widevine: ' + esc(speaker.widevine) + (speaker.err ? '<br>last: ' + esc(speaker.err) : '') + '<br>render ' + Math.round(scale * 100) + '% · ' + Math.round(fpsNow) + ' fps' +
       (DEMO ? ' · demo mode' : '') + '</div>';
   }
   function showHelp(ms) {
