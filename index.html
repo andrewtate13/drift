@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drift</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#ddd3ea;--dim:#958da6;--faint:#5f596e;--acc:#b89cff}
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;color:var(--ink);cursor:none;
+    font-family:'Instrument Serif',Georgia,'Times New Roman',serif;-webkit-font-smoothing:antialiased}
+  body.pointer{cursor:default}
+  #keep,#gl{position:fixed;left:0;top:0;width:100%;height:100%;display:block;background:#000}
+  #keep{z-index:0;object-fit:cover}
+  #gl{z-index:1}
+  .layer{position:fixed;left:0;top:0;will-change:transform,opacity}
+  .mono{font-family:'JetBrains Mono',Menlo,'DejaVu Sans Mono',monospace}
+
+  /* now-playing card */
+  #card{z-index:4;display:flex;align-items:center;opacity:0;transition:opacity 2.5s ease}
+  #card.show{opacity:1}
+  #card.show.paused{opacity:.42}
+  .art{position:relative;width:13vw;height:13vw;flex:none;margin-right:2.2vw}
+  .art img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;border-radius:.25vw;opacity:0;
+    transition:opacity 2.2s ease;box-shadow:0 1.6vw 4vw rgba(0,0,0,.75)}
+  .art img.on{opacity:.9}
+  .art canvas{position:absolute;left:-45%;top:-45%;width:190%;height:190%;opacity:.45;transition:opacity 2s;
+    -webkit-mask-image:radial-gradient(closest-side,#000 25%,transparent);mask-image:radial-gradient(closest-side,#000 25%,transparent)}
+  .meta{width:24vw;transition:opacity .8s ease}
+  .meta.swap{opacity:0}
+  .kick{font-size:.7vw;letter-spacing:.24em;text-transform:uppercase;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .title{font-size:3vw;line-height:1.02;font-style:italic;color:var(--ink);margin:.45vw 0 .5vw;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .artist{font-size:1.55vw;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .album{font-size:.75vw;color:var(--faint);margin-top:.55vw;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar{position:relative;height:2px;background:rgba(255,255,255,.07);margin-top:1.1vw;width:20vw;overflow:hidden;border-radius:2px}
+  .bar i{position:absolute;left:0;top:0;height:100%;width:100%;transform-origin:0 50%;transform:scaleX(0);background:var(--acc);opacity:.65}
+  .times{font-size:.68vw;color:var(--faint);margin-top:.45vw;display:flex;justify-content:space-between;width:20vw}
+
+  /* synced lyrics: smoke that appears somewhere new for every line */
+  .lyr{z-index:3;font-style:italic;font-size:3.4vw;line-height:1.08;max-width:44vw;color:var(--acc);opacity:0;
+    transition:opacity 1.8s ease;text-shadow:0 0 2.5vw rgba(0,0,0,.7)}
+  .lyr.on{opacity:.5}
+
+  #toast{z-index:6;font-size:.8vw;letter-spacing:.3em;text-transform:uppercase;color:var(--dim);opacity:0;transition:opacity .9s ease;white-space:nowrap}
+  #toast.on{opacity:.85}
+
+  /* setup + help panel */
+  #panel{z-index:7;width:38vw;padding:2vw 2.2vw;box-sizing:border-box;background:rgba(5,3,9,.72);
+    border:1px solid rgba(160,140,200,.14);border-radius:.4vw;font-size:1.15vw;line-height:1.45;opacity:0;transition:opacity .8s;pointer-events:none}
+  #panel.on{opacity:1;pointer-events:auto}
+  #panel h1{font-weight:normal;font-style:italic;font-size:3.4vw;line-height:1;margin:.1em 0 .35em;color:var(--ink)}
+  #panel .k{font-size:.7vw;letter-spacing:.24em;text-transform:uppercase;color:var(--faint)}
+  #panel p{margin:.5em 0;color:var(--dim)}
+  #panel .m{font-family:'JetBrains Mono',Menlo,monospace;font-size:.78vw;color:var(--dim)}
+  #panel .err{color:#c48a96}
+  #panel .btn{display:inline-block;margin:.9em 1em 0 0;padding:.35em 1em;border:1px solid rgba(170,150,210,.25);border-radius:.3em;color:var(--dim);cursor:pointer}
+  #panel .btn.focus{border-color:var(--acc);color:var(--ink);background:rgba(150,110,210,.14)}
+  #panel input{font:inherit;font-family:'JetBrains Mono',Menlo,monospace;font-size:.9vw;width:100%;box-sizing:border-box;margin-top:.6em;
+    padding:.4em .6em;background:rgba(0,0,0,.6);color:var(--ink);border:1px solid rgba(170,150,210,.3);border-radius:.3em}
+  #panel table{border-collapse:collapse;margin:.4em 0}
+  #panel td{padding:.15em 1.2em .15em 0;color:var(--dim);vertical-align:top}
+  #panel td:first-child{font-family:'JetBrains Mono',Menlo,monospace;font-size:.75vw;color:var(--faint);white-space:nowrap;padding-top:.35em}
+</style>
+</head>
+<body>
+<video id="keep" src="loop.mp4" muted loop playsinline autoplay></video>
+<canvas id="gl"></canvas>
+<div id="lyrA" class="layer lyr"></div>
+<div id="lyrB" class="layer lyr"></div>
+<div id="card" class="layer">
+  <div class="art"><canvas id="glow" width="20" height="20"></canvas><img id="artA" alt=""><img id="artB" alt=""></div>
+  <div class="meta" id="meta">
+    <div class="kick mono" id="kick"></div>
+    <div class="title" id="title"></div>
+    <div class="artist" id="artist"></div>
+    <div class="album mono" id="album"></div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="times mono"><span id="tNow">0:00</span><span id="tDur">0:00</span></div>
+  </div>
+</div>
+<div id="toast" class="layer mono"></div>
+<div id="panel" class="layer"></div>
+<noscript>Drift needs JavaScript.</noscript>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ======================================================================
+     Drift: burn-in-safe Spotify visuals for an LG OLED (webOS browser).
+     Paste your Spotify app's Client ID here (or open the page with ?cid=...).
+     ====================================================================== */
+  var CLIENT_ID = '';
+
+  var SCOPES = 'user-read-currently-playing user-read-playback-state user-modify-playback-state streaming user-read-email user-read-private';
+  var AUTO_SCENE_MS = 7 * 60 * 1000;      // auto-cycle scenes
+  var PAUSE_HIDE_MS = 90 * 1000;          // paused: hide card after this
+  var IDLE_DIM_MS = 10 * 60 * 1000;       // nothing playing: dim visuals after this
+  var IDLE_SLEEP_MS = 30 * 60 * 1000;     // nothing playing: let the TV sleep after this
+
+  var $ = function (id) { return document.getElementById(id); };
+  function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
+  function mmss(ms) { var s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var TAU = Math.PI * 2;
+
+  /* ---------- storage ---------- */
+  var LS = {
+    get: function (k) { try { return localStorage.getItem('drift.' + k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem('drift.' + k, v); } catch (e) {} },
+    del: function (k) { try { localStorage.removeItem('drift.' + k); } catch (e) {} },
+    clear: function () { try { Object.keys(localStorage).forEach(function (k) { if (k.indexOf('drift.') === 0) localStorage.removeItem(k); }); } catch (e) {} }
+  };
+  var Q = new URLSearchParams(location.search);
+  var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+  if (Q.has('reset')) { LS.clear(); }
+  if (Q.get('cid')) LS.set('cid', Q.get('cid').trim());
+  var cid = CLIENT_ID || LS.get('cid') || '';
+  var DEMO = Q.has('demo');
+
+  /* ---------- keep-awake: a real video must be playing full screen (tested on the TV: T6) ---------- */
+  var keep = $('keep'), wantAwake = true;
+  function keepPlay() { if (!wantAwake) return; try { var p = keep.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+  keep.addEventListener('pause', function () { if (wantAwake) setTimeout(keepPlay, 600); });
+  setInterval(function () { if (wantAwake && keep.paused) keepPlay(); }, 10000);
+  function setAwake(on) { if (on === wantAwake) return; wantAwake = on; if (on) keepPlay(); else try { keep.pause(); } catch (e) {} }
+
+  /* ======================================================================
+     WebGL scenes. All cheap enough for a Mali-G51 at ~1/3 resolution.
+     ====================================================================== */
+  var HEAD = [
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH', 'precision highp float;', '#else', 'precision mediump float;', '#endif',
+    'uniform vec2 uR; uniform float uT; uniform float uFade; uniform float uPulse; uniform float uDim;',
+    'uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3; uniform vec3 uC4; uniform sampler2D uTex;',
+    'float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}',
+    'float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);',
+    ' return mix(mix(h(i),h(i+vec2(1.,0.)),f.x),mix(h(i+vec2(0.,1.)),h(i+vec2(1.,1.)),f.x),f.y);}',
+    'float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*n(p);p=p*2.07+vec2(1.7,9.2);a*=.5;}return v;}',
+    'vec2 UV(){return (gl_FragCoord.xy-.5*uR)/uR.y;}',
+    'vec3 fin(vec3 c,vec2 uv){',
+    ' c*=1.-smoothstep(.25,1.4,length(uv*vec2(.78,1.)));',
+    ' c*=(1.+uPulse*.35)*uFade*uDim;',
+    ' c+=(h(gl_FragCoord.xy+fract(uT*.37))-.5)/255.;',
+    ' return max(c,0.);}'
+  ].join('\n');
+
+  // 1. Nebula: domain-warped smoke in the cover's colours.
+  var NEBULA = [
+    'void main(){vec2 uv=UV();float t=uT*.018;',
+    ' vec2 q=vec2(fbm(uv*1.25+vec2(0.,t)),fbm(uv*1.25+vec2(5.2,1.3)-t));',
+    ' float f=fbm(uv*1.05+1.9*q+vec2(t*.6,-t*.4));',
+    ' float body=smoothstep(.3,.82,f);',
+    ' vec3 c=uC0;',
+    ' c+=uC1*body*body*.95;',
+    ' c+=uC2*smoothstep(.6,1.1,length(q))*body*.55;',
+    ' c+=uC3*pow(smoothstep(.62,.95,f),4.)*1.1;',
+    ' c+=uC4*pow(max(0.,q.x-q.y)*2.,3.)*.3;',
+    ' c*=.35+.65*smoothstep(.2,.55,f);',
+    ' gl_FragColor=vec4(fin(c,uv),1.);}'
+  ].join('\n');
+
+  // 2. Eclipse: a wandering black disc with a corona. Mostly true black (OLED-friendly).
+  var ECLIPSE = [
+    'void main(){vec2 uv=UV();float t=uT;',
+    ' vec2 ctr=vec2(.30*sin(t*.011)+.09*sin(t*.027),.15*cos(t*.009)+.05*sin(t*.031));',
+    ' vec2 p=uv-ctr;float r=length(p);',
+    ' float R=.25+.015*sin(t*.07)+uPulse*.03;',
+    ' vec2 dir=p/max(r,.001);',
+    ' float rays=fbm(dir*2.2+vec2(t*.02,-t*.015)+r*1.4);',
+    ' float fine=fbm(dir*6.+vec2(-t*.03,t*.012));',
+    ' float o=max(r-R,0.);',
+    ' float cor=exp(-o*(6.-3.*rays));',
+    ' vec3 c=uC0*.6*(1.-smoothstep(0.,1.3,r));',
+    ' c+=mix(uC1,uC2,smoothstep(.3,.7,rays))*cor*(.25+1.3*rays*fine);',
+    ' c+=uC3*exp(-abs(r-R)*85.)*.55;',
+    ' c+=uC4*exp(-abs(r-R*1.9-.04*sin(t*.05))*40.)*.08*fine;',
+    ' c*=smoothstep(R-.003,R+.005,r)*.985+.015;',
+    ' gl_FragColor=vec4(fin(c,uv),1.);}'
+  ].join('\n');
+
+  // 3. Silk: slow aurora ribbons with hanging curtains.
+  var SILK = [
+    'void main(){vec2 uv=UV();float t=uT*.05;',
+    ' vec3 c=uC0*.7;',
+    ' for(int i=0;i<4;i++){float fi=float(i);',
+    '  vec3 col=i==0?uC1:(i==1?uC2:(i==2?uC3:uC4));',
+    '  float y=(fi-1.5)*.17+.22*sin(uv.x*(.9+fi*.23)+t*(1.+fi*.31)+fi*2.1)+.35*(n(vec2(uv.x*1.1+fi*3.7,t*.6+fi))-.5);',
+    '  float d=uv.y-y;',
+    '  float core=exp(-d*d*170.);',
+    '  float halo=exp(-abs(d)*9.)*.2;',
+    '  float curtain=exp(-max(d,0.)*3.2)*step(0.,d)*.1;',
+    '  float sh=.5+.5*n(vec2(uv.x*7.+fi*11.,t*3.));',
+    '  c+=col*(core*.5+halo+curtain)*sh;',
+    ' }',
+    ' gl_FragColor=vec4(fin(c,uv),1.);}'
+  ].join('\n');
+
+  // 4. Melt: the album cover itself, liquified and smeared into the dark.
+  var MELT = [
+    'void main(){vec2 uv=UV();float t=uT*.02;',
+    ' vec2 w=vec2(fbm(uv*1.6+vec2(t,0.)),fbm(uv*1.6+vec2(3.1,7.7)-vec2(0.,t)))-.5;',
+    ' float a=t*.35;mat2 m=mat2(cos(a),-sin(a),sin(a),cos(a));',
+    ' vec2 tc=m*(uv*.62)+w*(.38+uPulse*.2)+.5;',
+    ' vec3 s=texture2D(uTex,tc).rgb*.5+texture2D(uTex,tc+w*.06).rgb*.3+texture2D(uTex,tc-w*.09).rgb*.2;',
+    ' s=s*mix(s,vec3(1.),.4)*1.05;',
+    ' float f=fbm(uv*2.+w*3.+t);',
+    ' vec3 c=mix(uC0,s,.45+.55*smoothstep(.2,.7,f));',
+    ' c+=uC3*pow(smoothstep(.6,.9,f),3.)*.25;',
+    ' gl_FragColor=vec4(fin(c,uv),1.);}'
+  ].join('\n');
+
+  var SCENES = [{ name: 'Nebula', src: NEBULA }, { name: 'Eclipse', src: ECLIPSE }, { name: 'Silk', src: SILK }, { name: 'Melt', src: MELT }];
+
+  var glc = $('gl'), gl = null, tex = null, scale = 0.33, MAX_SCALE = 0.6;
+  function initGL() {
+    var opts = { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'low-power' };
+    gl = glc.getContext('webgl', opts) || glc.getContext('experimental-webgl', opts);
+    if (!gl) { console.warn('No WebGL'); return; }
+    function sh(type, src) {
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    }
+    var vs = sh(gl.VERTEX_SHADER, 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}');
+    SCENES.forEach(function (sc) {
+      try {
+        var pr = gl.createProgram();
+        gl.attachShader(pr, vs); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, HEAD + '\n' + sc.src));
+        gl.bindAttribLocation(pr, 0, 'p'); gl.linkProgram(pr);
+        if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+        sc.prog = pr; sc.u = {};
+        ['uR', 'uT', 'uFade', 'uPulse', 'uDim', 'uC0', 'uC1', 'uC2', 'uC3', 'uC4', 'uTex'].forEach(function (k) { sc.u[k] = gl.getUniformLocation(pr, k); });
+      } catch (e) { sc.bad = true; console.error('Scene ' + sc.name + ' failed:', e.message || e); }
+    });
+    var b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array([8, 6, 12]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
+    setScale(scale);
+  }
+  function setScale(s) {
+    scale = s;
+    glc.width = Math.max(64, Math.round(innerWidth * s));
+    glc.height = Math.max(36, Math.round(innerHeight * s));
+    if (gl) gl.viewport(0, 0, glc.width, glc.height);
+  }
+  window.addEventListener('resize', function () { setScale(scale); });
+  function uploadTex(canvas) {
+    if (!gl || !canvas) return;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, canvas); } catch (e) { console.warn('texture upload failed', e); }
+  }
+
+  /* ---------- palette: k-means on a 40x40 thumbnail of the cover ---------- */
+  function rgb2hsl(c) {
+    var r = c[0], g = c[1], b = c[2], mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, h = 0, s = 0, d = mx - mn;
+    if (d > 1e-5) {
+      s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h /= 6;
+    }
+    return [h, s, l];
+  }
+  function hsl2rgb(h, s, l) {
+    h = ((h % 1) + 1) % 1;
+    function f(n) { var k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }
+    return [f(0), f(8), f(4)];
+  }
+  function hashStr(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; }
+  function fallbackPalette(seed) {
+    var hue = hashStr(seed || 'drift');
+    return [hsl2rgb(hue, .5, .035), hsl2rgb(hue, .7, .5), hsl2rgb(hue + .08, .65, .45), hsl2rgb(hue - .1, .75, .55), hsl2rgb(hue + .45, .5, .45)];
+  }
+  function extractPalette(img) {
+    var c = document.createElement('canvas'); c.width = c.height = 40;
+    var x = c.getContext('2d'); x.drawImage(img, 0, 0, 40, 40);
+    var d; try { d = x.getImageData(0, 0, 40, 40).data; } catch (e) { return null; } // tainted canvas
+    var px = [], i, j, k;
+    for (i = 0; i < d.length; i += 4) px.push([d[i] / 255, d[i + 1] / 255, d[i + 2] / 255]);
+    var luma = function (p) { return p[0] * .299 + p[1] * .587 + p[2] * .114; };
+    var sorted = px.slice().sort(function (a, b) { return luma(a) - luma(b); });
+    var K = 6, cent = [];
+    for (k = 0; k < K; k++) cent.push(sorted[Math.floor((k + .5) / K * sorted.length)].slice());
+    var cnt = [];
+    for (var it = 0; it < 8; it++) {
+      var sum = []; cnt = [];
+      for (k = 0; k < K; k++) { sum.push([0, 0, 0]); cnt.push(0); }
+      for (i = 0; i < px.length; i++) {
+        var best = 0, bd = 1e9;
+        for (k = 0; k < K; k++) { var dr = px[i][0] - cent[k][0], dg = px[i][1] - cent[k][1], db = px[i][2] - cent[k][2], dd = dr * dr + dg * dg + db * db; if (dd < bd) { bd = dd; best = k; } }
+        for (j = 0; j < 3; j++) sum[best][j] += px[i][j];
+        cnt[best]++;
+      }
+      for (k = 0; k < K; k++) if (cnt[k]) for (j = 0; j < 3; j++) cent[k][j] = sum[k][j] / cnt[k];
+    }
+    var cl = cent.map(function (c, k) { var hsl = rgb2hsl(c); return { rgb: c, h: hsl[0], s: hsl[1], l: hsl[2], n: cnt[k] / px.length }; }).filter(function (c) { return c.n > 0; });
+    var dark = cl.slice().sort(function (a, b) { return a.l - b.l; })[0];
+    var base = hsl2rgb(dark.h, Math.min(dark.s, .6), .03);
+    cl.forEach(function (c) { c.score = c.s * .7 + c.n * .6 + (c.l > .15 && c.l < .85 ? .15 : 0) - (c.l < .07 ? .6 : 0) - (c.l > .93 ? .3 : 0); });
+    cl.sort(function (a, b) { return b.score - a.score; });
+    var acc = [];
+    cl.forEach(function (c) { if (acc.length < 4) acc.push(c); });
+    var top = acc[0] || { h: hashStr('x'), s: .6 };
+    var extra = [.09, -.09, .5, .25];
+    for (i = 0; acc.length < 4; i++) acc.push({ h: top.h + extra[i], s: Math.max(top.s, .5), l: .5 });
+    // monochrome covers: nudge the later accents apart in hue so scenes keep some depth
+    function hd(a, b) { var d = Math.abs(a - b) % 1; return Math.min(d, 1 - d); }
+    var nudge = [0, .07, -.09, .45];
+    for (i = 1; i < 4; i++) if (hd(acc[i].h, acc[0].h) < .05) acc[i] = { h: acc[0].h + nudge[i], s: i === 3 ? .4 : acc[i].s, l: acc[i].l };
+    var out = [base];
+    acc.forEach(function (c) { out.push(hsl2rgb(c.h, clamp(Math.max(c.s, .45), 0, .9), clamp(c.l, .38, .6))); });
+    return out;
+  }
+  // default: deep violet / teal until the first cover arrives
+  var DEFAULT_PAL = [[.022, .012, .035], [.42, .18, .62], [.1, .36, .44], [.68, .32, .78], [.18, .2, .55]];
+  var pal = DEFAULT_PAL.map(function (c) { return c.slice(); }), palTgt = DEFAULT_PAL.map(function (c) { return c.slice(); });
+  var palFirst = true;
+  function setPalette(p) {
+    palTgt = p; setAccentCSS(p);
+    if (palFirst) { palFirst = false; pal = p.map(function (c) { return c.slice(); }); } // first cover: no slow glide from the default
+  }
+  function setAccentCSS(p) {
+    var h = rgb2hsl(p[1]); var c = hsl2rgb(h[0], Math.min(.8, h[1] + .1), .74);
+    document.documentElement.style.setProperty('--acc', 'rgb(' + c.map(function (v) { return Math.round(v * 255); }).join(',') + ')');
+  }
+
+  /* ======================================================================
+     State
+     ====================================================================== */
+  var S = {
+    mode: 'idle', since: Date.now(),          // playing | paused | idle
+    track: null, progress: 0, fetchedAt: 0, duration: 0, playing: false,
+    scene: clamp(+(Q.get('scene') || LS.get('scene') || 0) || 0, 0, SCENES.length - 1),
+    pending: -1, switching: false, fade: 0, lastSceneChange: Date.now(),
+    userDim: +(LS.get('dim') || 1) || 1, dim: 1, pulse: 0, tScale: 0.4, T: 0,
+    showCard: LS.get('card') !== '0', showLyrics: LS.get('lyrics') !== '0',
+    count: +(LS.get('count') || 0) || 0, panel: null, focus: 0
+  };
+  function progressNow() { return S.playing ? Math.min(S.duration, S.progress + (Date.now() - S.fetchedAt)) : S.progress; }
+
+  /* ---------- drift: every visible thing roams the whole screen, never stops ---------- */
+  function driftPos(t, W, H, w, h, px, py, ph) {
+    var ax = Math.max(0, (W - w) / 2 - W * 0.035), ay = Math.max(0, (H - h) / 2 - H * 0.05);
+    return {
+      x: (W - w) / 2 + ax * (0.62 * Math.sin(t * TAU / px[0] + ph) + 0.38 * Math.sin(t * TAU / px[1] + ph * 2.3)),
+      y: (H - h) / 2 + ay * (0.6 * Math.sin(t * TAU / py[0] + ph * 0.7) + 0.4 * Math.sin(t * TAU / py[1] + ph * 1.9))
+    };
+  }
+  var card = $('card'), panel = $('panel'), toastEl = $('toast');
+  var sizes = { card: [0, 0], panel: [0, 0], toast: [0, 0] };
+
+  /* ======================================================================
+     Frame loop
+     ====================================================================== */
+  var last = performance.now(), fpsAcc = 0, fpsN = 0, fpsNow = 0, frameNo = 0;
+  function frame() {
+    requestAnimationFrame(frame);
+    var now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now; frameNo++;
+    var t = now / 1000;
+
+    // adaptive resolution: aim for ~40-55 fps on weak TV GPUs
+    fpsAcc += dt; fpsN++;
+    if (fpsAcc >= 2) {
+      fpsNow = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0;
+      if (fpsNow < 38 && scale > 0.2) setScale(Math.max(0.2, scale * 0.88));
+      else if (fpsNow > 56 && scale < MAX_SCALE) setScale(Math.min(MAX_SCALE, scale * 1.08));
+    }
+
+    // palette glides to the new cover
+    var k = Math.min(1, dt * 0.7);
+    for (var i = 0; i < 5; i++) for (var j = 0; j < 3; j++) pal[i][j] += (palTgt[i][j] - pal[i][j]) * k;
+
+    // scene crossfade through black
+    if (S.switching) {
+      S.fade -= dt / 0.9;
+      if (S.fade <= 0) {
+        S.fade = 0; S.scene = S.pending; S.switching = false;
+        if (pendingTex) { uploadTex(pendingTex); pendingTex = null; }
+      }
+    } else S.fade = Math.min(1, S.fade + dt / 1.6);
+
+    S.pulse *= Math.exp(-dt * 0.8);
+    var tsTarget = S.mode === 'playing' ? 1 : S.mode === 'paused' ? 0.45 : 0.25;
+    S.tScale += (tsTarget - S.tScale) * Math.min(1, dt * 0.4);
+    S.T += dt * S.tScale;
+    var dimTarget = S.userDim * (S.mode === 'idle' && Date.now() - S.since > IDLE_DIM_MS ? 0.25 : 1);
+    S.dim += (dimTarget - S.dim) * Math.min(1, dt * 0.5);
+
+    var sc = SCENES[S.scene];
+    if (gl && sc.prog) {
+      gl.useProgram(sc.prog);
+      var u = sc.u;
+      gl.uniform2f(u.uR, glc.width, glc.height); gl.uniform1f(u.uT, S.T + 100);
+      gl.uniform1f(u.uFade, S.fade); gl.uniform1f(u.uPulse, S.pulse); gl.uniform1f(u.uDim, S.dim);
+      gl.uniform3fv(u.uC0, pal[0]); gl.uniform3fv(u.uC1, pal[1]); gl.uniform3fv(u.uC2, pal[2]); gl.uniform3fv(u.uC3, pal[3]); gl.uniform3fv(u.uC4, pal[4]);
+      if (u.uTex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(u.uTex, 0); }
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    // DOM layers (transform/opacity only: compositor-cheap)
+    var W = innerWidth, H = innerHeight;
+    if (frameNo % 30 === 1) {
+      sizes.card = [card.offsetWidth, card.offsetHeight];
+      sizes.panel = [panel.offsetWidth, panel.offsetHeight];
+      sizes.toast = [toastEl.offsetWidth, toastEl.offsetHeight];
+    }
+    var p = driftPos(t, W, H, sizes.card[0], sizes.card[1], [131, 53], [89, 41], 0.3);
+    var ry = 7 * Math.sin(t * TAU / 47), rx = 4 * Math.sin(t * TAU / 61 + 1), s = 1 + 0.025 * Math.sin(t * TAU / 27);
+    card.style.transform = 'translate3d(' + p.x.toFixed(1) + 'px,' + p.y.toFixed(1) + 'px,0) perspective(1400px) rotateY(' + ry.toFixed(2) + 'deg) rotateX(' + rx.toFixed(2) + 'deg) scale(' + s.toFixed(4) + ')';
+    p = driftPos(t, W, H, sizes.panel[0], sizes.panel[1], [97, 37.7], [71, 29.3], 1.3);
+    panel.style.transform = 'translate3d(' + p.x.toFixed(1) + 'px,' + p.y.toFixed(1) + 'px,0) rotate(' + (0.9 * Math.sin(t * TAU / 53)).toFixed(2) + 'deg)';
+    p = driftPos(t, W, H, sizes.toast[0], sizes.toast[1], [83, 31], [67, 23], 2.1);
+    toastEl.style.transform = 'translate3d(' + p.x.toFixed(1) + 'px,' + p.y.toFixed(1) + 'px,0)';
+    $('bar').style.transform = 'scaleX(' + (S.duration ? progressNow() / S.duration : 0).toFixed(4) + ')';
+    lyricsFrame(t, dt);
+  }
+
+  /* ---------- scenes ---------- */
+  function usable(i) { return !SCENES[i].bad; }
+  function goScene(i, quiet) {
+    var n = SCENES.length;
+    for (var tries = 0; tries < n && !usable(((i % n) + n) % n); tries++) i++;
+    i = ((i % n) + n) % n;
+    S.pending = i; S.switching = true; S.lastSceneChange = Date.now();
+    LS.set('scene', i);
+    if (!quiet) toast(SCENES[i].name);
+  }
+  setInterval(function () {
+    if (S.mode !== 'idle' && Date.now() - S.lastSceneChange > AUTO_SCENE_MS) goScene((S.switching ? S.pending : S.scene) + 1, true);
+  }, 15000);
+
+  /* ---------- toast ---------- */
+  var toastT = null;
+  function toast(msg, ms) {
+    toastEl.textContent = msg; toastEl.className = 'layer mono on';
+    sizes.toast = [toastEl.offsetWidth, toastEl.offsetHeight];
+    clearTimeout(toastT); toastT = setTimeout(function () { toastEl.className = 'layer mono'; }, ms || 2600);
+  }
+
+  /* ======================================================================
+     Track changes: cover, palette, texture, lyrics, genres
+     ====================================================================== */
+  var artSlot = 0, pendingTex = null, trackSeq = 0;
+  function loadImage(url) {
+    return new Promise(function (res, rej) { var i = new Image(); i.crossOrigin = 'anonymous'; i.onload = function () { res(i); }; i.onerror = rej; i.src = url; });
+  }
+  function onTrack(info) {
+    var my = ++trackSeq;
+    S.count++; LS.set('count', S.count);
+    S.pulse = 1;
+    var meta = $('meta');
+    meta.className = 'meta swap';
+    setTimeout(function () {
+      if (my !== trackSeq) return;
+      $('kick').textContent = kicker(info, null);
+      $('title').textContent = info.title;
+      $('artist').textContent = info.artist;
+      $('album').textContent = info.album + (info.year ? '  ·  ' + info.year : '');
+      $('tDur').textContent = mmss(info.duration);
+      meta.className = 'meta';
+      sizes.card = [card.offsetWidth, card.offsetHeight];
+    }, 800);
+
+    if (info.cover) {
+      loadImage(info.cover).then(function (img) {
+        if (my !== trackSeq) return;
+        var next = artSlot ? $('artA') : $('artB'), prev = artSlot ? $('artB') : $('artA');
+        next.src = img.src; next.className = 'on'; prev.className = ''; artSlot = 1 - artSlot;
+        var g = $('glow').getContext('2d'); g.clearRect(0, 0, 20, 20); g.drawImage(img, 0, 0, 20, 20);
+        setPalette(extractPalette(img) || fallbackPalette(info.title + info.artist));
+        var tc = document.createElement('canvas'); tc.width = tc.height = 256;
+        tc.getContext('2d').drawImage(img, 0, 0, 256, 256);
+        var tainted = false; try { tc.getContext('2d').getImageData(0, 0, 1, 1); } catch (e) { tainted = true; }
+        if (!tainted) {
+          if (SCENES[S.scene].name === 'Melt' && !S.switching) { pendingTex = tc; S.pending = S.scene; S.switching = true; }
+          else uploadTex(tc);
+        }
+      }).catch(function () { setPalette(fallbackPalette(info.title + info.artist)); });
+    } else { setPalette(fallbackPalette(info.title + info.artist)); }
+
+    fetchLyrics(info, my);
+    if (info.genres) { $('kick').textContent = kicker(info, info.genres); }
+    else if (info.artistId && !DEMO) {
+      api('GET', '/artists/' + info.artistId).then(function (r) {
+        if (my !== trackSeq || !r.data) return;
+        info.genres = (r.data.genres || []).slice(0, 2);
+        $('kick').textContent = kicker(info, info.genres);
+      }).catch(function () {});
+    }
+  }
+  function kicker(info, genres) {
+    var parts = ['Nº ' + ('00' + S.count).slice(-3)];
+    if (info.isEpisode) parts.push('transmission');
+    else if (genres && genres.length) parts.push(genres.join(', '));
+    else parts.push('specimen');
+    return parts.join('  ·  ');
+  }
+
+  /* ---------- synced lyrics (LRCLIB, free, no key) ---------- */
+  var LYR = { lines: null, idx: -1, els: [$('lyrA'), $('lyrB')], cur: 0, motion: [null, null] };
+  function cleanTitle(t) {
+    return t.replace(/\s+-\s+.*(remaster|version|edit|mix|live|mono|stereo).*$/i, '').replace(/\s*[\(\[](feat|with|ft)\.?[^\)\]]*[\)\]]/i, '').trim();
+  }
+  function parseLRC(txt) {
+    var out = [];
+    txt.split('\n').forEach(function (line) {
+      var re = /\[(\d+):(\d+(?:\.\d+)?)\]/g, m, times = [], lastIdx = 0;
+      while ((m = re.exec(line))) { times.push((+m[1] * 60 + +m[2]) * 1000); lastIdx = re.lastIndex; }
+      var text = line.slice(lastIdx).trim();
+      times.forEach(function (tm) { out.push({ t: tm, text: text }); });
+    });
+    return out.sort(function (a, b) { return a.t - b.t; });
+  }
+  function fetchLyrics(info, my) {
+    LYR.lines = null; LYR.idx = -1; hideLyric();
+    if (info.isEpisode) return;
+    if (info.lyrics) { LYR.lines = info.lyrics; return; }
+    var title = cleanTitle(info.title), artist = info.artist.split(',')[0].trim();
+    var q1 = 'https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: artist, track_name: title, album_name: info.album, duration: Math.round(info.duration / 1000) });
+    var q2 = 'https://lrclib.net/api/search?' + new URLSearchParams({ artist_name: artist, track_name: title });
+    fetch(q1).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.syncedLyrics) return d;
+        return fetch(q2).then(function (r) { return r.ok ? r.json() : []; }).then(function (arr) {
+          for (var i = 0; i < (arr || []).length; i++) if (arr[i].syncedLyrics) return arr[i];
+          return null;
+        });
+      })
+      .then(function (d) { if (my === trackSeq && d && d.syncedLyrics) LYR.lines = parseLRC(d.syncedLyrics); })
+      .catch(function () {});
+  }
+  function hideLyric() { LYR.els.forEach(function (e) { e.className = 'layer lyr'; }); }
+  function showLyric(text) {
+    LYR.els[LYR.cur].className = 'layer lyr';
+    if (!text) return;
+    LYR.cur = 1 - LYR.cur;
+    var el = LYR.els[LYR.cur];
+    el.textContent = text;
+    var W = innerWidth, H = innerHeight, w = el.offsetWidth, h = el.offsetHeight;
+    var ang = Math.random() * TAU, sp = 6 + Math.random() * 8;
+    LYR.motion[LYR.cur] = {
+      x: W * 0.05 + Math.random() * Math.max(1, W * 0.9 - w), y: H * 0.08 + Math.random() * Math.max(1, H * 0.84 - h),
+      vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, born: performance.now() / 1000, rot: (Math.random() - .5) * 4
+    };
+    el.className = 'layer lyr on';
+  }
+  function lyricsFrame(t) {
+    for (var i = 0; i < 2; i++) {
+      var m = LYR.motion[i]; if (!m) continue;
+      var age = t - m.born;
+      LYR.els[i].style.transform = 'translate3d(' + (m.x + m.vx * age).toFixed(1) + 'px,' + (m.y + m.vy * age).toFixed(1) + 'px,0) rotate(' + (m.rot + Math.sin(age * .3) * .6).toFixed(2) + 'deg)';
+    }
+    if (!LYR.lines || !S.showLyrics || S.mode !== 'playing') { if (LYR.idx !== -2) { LYR.idx = -2; hideLyric(); } return; }
+    var pos = progressNow() + 250, idx = -1;
+    for (var j = 0; j < LYR.lines.length && LYR.lines[j].t <= pos; j++) idx = j;
+    if (idx !== LYR.idx) { LYR.idx = idx; showLyric(idx >= 0 ? LYR.lines[idx].text : ''); }
+  }
+
+  /* ======================================================================
+     Playback state + modes
+     ====================================================================== */
+  function setMode(m) {
+    if (m === S.mode) return;
+    S.mode = m; S.since = Date.now();
+    if (m !== 'idle') setAwake(true);
+    updateCardVis();
+  }
+  function updateCardVis() {
+    var show = S.showCard && S.track && (S.mode === 'playing' || (S.mode === 'paused' && Date.now() - S.since < PAUSE_HIDE_MS));
+    card.className = 'layer' + (show ? ' show' : '') + (S.mode === 'paused' ? ' paused' : '');
+  }
+  setInterval(function () {
+    updateCardVis();
+    if (S.mode === 'idle' && Date.now() - S.since > IDLE_SLEEP_MS) setAwake(false); // let the TV sleep normally
+    $('tNow').textContent = mmss(progressNow());
+  }, 1000);
+
+  function handlePlayback(d) {
+    var it = d.item, isEp = it.type === 'episode';
+    var images = isEp ? (it.images || (it.show && it.show.images) || []) : ((it.album && it.album.images) || []);
+    var info = {
+      id: it.id || it.uri, title: it.name, isEpisode: isEp,
+      artist: isEp ? ((it.show && (it.show.publisher || it.show.name)) || '') : (it.artists || []).map(function (a) { return a.name; }).join(', '),
+      album: isEp ? ((it.show && it.show.name) || '') : ((it.album && it.album.name) || ''),
+      year: !isEp && it.album && it.album.release_date ? it.album.release_date.slice(0, 4) : '',
+      cover: images.length ? images[0].url : null, duration: it.duration_ms || 0,
+      artistId: !isEp && it.artists && it.artists[0] ? it.artists[0].id : null
+    };
+    S.progress = d.progress_ms || 0; S.fetchedAt = Date.now(); S.duration = info.duration; S.playing = !!d.is_playing;
+    if (!S.track || S.track.id !== info.id) { S.track = info; onTrack(info); }
+    setMode(S.playing ? 'playing' : 'paused');
+  }
+  function handleNothing() { S.playing = false; setMode('idle'); }
+
+  /* ======================================================================
+     Spotify auth: Authorization Code + PKCE, no server
+     ====================================================================== */
+  var tok = { access: LS.get('access'), refresh: LS.get('refresh'), exp: +(LS.get('exp') || 0) };
+  function randStr(n) {
+    var cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~', a = new Uint8Array(n), s = '';
+    crypto.getRandomValues(a); for (var i = 0; i < n; i++) s += cs[a[i] % cs.length]; return s;
+  }
+  function b64url(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function login() {
+    if (!cid) { showSetup(); return; }
+    if (!window.crypto || !crypto.subtle) { showSetup('This page must be opened over https (or 127.0.0.1) to log in.'); return; }
+    var v = randStr(64), st = randStr(16);
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)).then(function (h) {
+      LS.set('pkce', v); LS.set('state', st);
+      location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+        client_id: cid, response_type: 'code', redirect_uri: REDIRECT, code_challenge_method: 'S256', code_challenge: b64url(h), scope: SCOPES, state: st
+      }).toString();
+    });
+  }
+  function tokenReq(params) {
+    return fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params).toString()
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) { var e = new Error((d && (d.error_description || d.error)) || ('HTTP ' + r.status)); e.code = d && d.error; throw e; }
+        return d;
+      });
+    });
+  }
+  function saveTok(d) {
+    tok.access = d.access_token; tok.exp = Date.now() + (d.expires_in || 3600) * 1000;
+    if (d.refresh_token) tok.refresh = d.refresh_token;
+    LS.set('access', tok.access); LS.set('exp', tok.exp); if (tok.refresh) LS.set('refresh', tok.refresh);
+    if (d.scope) LS.set('scope', d.scope);
+  }
+  var refreshing = null;
+  function refreshTok() {
+    if (refreshing) return refreshing;
+    refreshing = tokenReq({ grant_type: 'refresh_token', refresh_token: tok.refresh, client_id: cid })
+      .then(function (d) { saveTok(d); refreshing = null; return tok.access; })
+      .catch(function (e) {
+        refreshing = null;
+        if (e.code === 'invalid_grant' || e.code === 'invalid_client') { logout(); showSetup('Spotify logged you out. Connect again.'); }
+        throw e;
+      });
+    return refreshing;
+  }
+  function getToken() {
+    if (tok.access && Date.now() < tok.exp - 60000) return Promise.resolve(tok.access);
+    if (!tok.refresh) return Promise.resolve(null);
+    return refreshTok();
+  }
+  function logout() { tok = { access: null, refresh: null, exp: 0 }; ['access', 'refresh', 'exp', 'scope'].forEach(LS.del); }
+
+  function api(method, path, body, retried) {
+    return getToken().then(function (t) {
+      if (!t) throw new Error('not logged in');
+      var headers = { Authorization: 'Bearer ' + t };
+      if (body) headers['Content-Type'] = 'application/json';
+      return fetch('https://api.spotify.com/v1' + path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined });
+    }).then(function (res) {
+      if (res.status === 401 && !retried) { tok.exp = 0; return api(method, path, body, true); }
+      if (res.status === 429) { var e = new Error('rate limited'); e.status = 429; e.retryAfter = +(res.headers.get('Retry-After') || 0) || 15; throw e; }
+      if (res.status === 204 || res.status === 202) return { status: res.status, data: null };
+      return res.json().catch(function () { return null; }).then(function (data) {
+        if (!res.ok) { var er = new Error('HTTP ' + res.status + (data && data.error && data.error.message ? ': ' + data.error.message : '')); er.status = res.status; throw er; }
+        return { status: res.status, data: data };
+      });
+    });
+  }
+
+  /* ---------- polling ---------- */
+  var pollT = null, pollFails = 0;
+  function schedulePoll(ms) { clearTimeout(pollT); pollT = setTimeout(poll, ms); }
+  function poll() {
+    if (DEMO || !tok.refresh) return;
+    api('GET', '/me/player/currently-playing?additional_types=track,episode').then(function (r) {
+      pollFails = 0;
+      var delay;
+      if (!r.data || !r.data.item) { handleNothing(); delay = Date.now() - S.since > 5 * 60000 ? 15000 : 6000; }
+      else {
+        handlePlayback(r.data);
+        delay = S.playing ? clamp(S.duration - progressNow() + 500, 1000, 4000) : 5000;
+      }
+      schedulePoll(delay);
+    }).catch(function (e) {
+      pollFails++;
+      console.warn('poll', e);
+      schedulePoll(e.retryAfter ? e.retryAfter * 1000 + 500 : Math.min(60000, 4000 * pollFails));
+    });
+  }
+
+  /* ---------- the page as a Spotify speaker (Web Playback SDK) ---------- */
+  var player = null, speaker = { state: 'off', msg: '', id: null };
+  function startSpeaker() {
+    if (DEMO || !tok.refresh) return;
+    if ((LS.get('scope') || '').indexOf('streaming') < 0) { speaker.state = 'off'; speaker.msg = 'log in again to enable'; return; }
+    speaker.state = 'loading';
+    var to = setTimeout(function () { if (speaker.state === 'loading') { speaker.state = 'fail'; speaker.msg = 'player did not start on this browser'; } }, 25000);
+    window.onSpotifyWebPlaybackSDKReady = function () {
+      try {
+        player = new window.Spotify.Player({ name: 'Drift', volume: 1, getOAuthToken: function (cb) { getToken().then(function (t) { cb(t); }); } });
+      } catch (e) { speaker.state = 'fail'; speaker.msg = String(e.message || e); clearTimeout(to); return; }
+      player.addListener('ready', function (d) { clearTimeout(to); speaker.state = 'ready'; speaker.id = d.device_id; toast('Drift is a Spotify speaker now', 4000); refreshPanel(); });
+      player.addListener('not_ready', function () { speaker.state = 'offline'; refreshPanel(); });
+      ['initialization_error', 'authentication_error', 'account_error'].forEach(function (ev) {
+        player.addListener(ev, function (e) { clearTimeout(to); speaker.state = 'fail'; speaker.msg = ev.replace('_', ' ') + ': ' + (e && e.message); console.warn(ev, e); refreshPanel(); });
+      });
+      player.addListener('playback_error', function (e) { console.warn('playback_error', e); });
+      player.addListener('player_state_changed', function () { schedulePoll(300); });
+      player.connect().then(function (ok) { if (!ok) { speaker.state = 'fail'; speaker.msg = 'connect() refused'; } });
+    };
+    var s = document.createElement('script'); s.src = 'https://sdk.scdn.co/spotify-player.js';
+    s.onerror = function () { clearTimeout(to); speaker.state = 'fail'; speaker.msg = 'could not load the Spotify player'; };
+    document.head.appendChild(s);
+  }
+
+  /* ---------- remote actions ---------- */
+  function apiAction(promise) { return promise.then(function () { schedulePoll(700); }).catch(function (e) { toast(e.status === 404 ? 'No active Spotify device' : e.status === 403 ? 'Spotify said no' : 'Could not reach Spotify'); }); }
+  function togglePlay() {
+    if (DEMO) { demo.toggle(); return; }
+    if (S.playing) { apiAction(api('PUT', '/me/player/pause')); toast('Pause'); return; }
+    toast('Play');
+    api('PUT', '/me/player/play').then(function () { schedulePoll(700); }).catch(function (e) {
+      if (e.status === 404 && speaker.state === 'ready') apiAction(api('PUT', '/me/player', { device_ids: [speaker.id], play: true }));
+      else toast(e.status === 404 ? 'No active Spotify device' : 'Could not reach Spotify');
+    });
+  }
+  function skip(dir) {
+    toast(dir > 0 ? 'Next' : 'Previous');
+    if (DEMO) { demo.skip(dir); return; }
+    apiAction(api('POST', dir > 0 ? '/me/player/next' : '/me/player/previous'));
+  }
+
+  /* ======================================================================
+     Panel: setup + help (drifts too)
+     ====================================================================== */
+  var panelT = null;
+  function setPanel(kind, html) {
+    S.panel = kind; S.focus = 0;
+    panel.innerHTML = html; panel.className = 'layer' + (kind ? ' on' : '');
+    sizes.panel = [panel.offsetWidth, panel.offsetHeight];
+    markFocus();
+  }
+  function markFocus() {
+    var b = panel.querySelectorAll('.btn');
+    for (var i = 0; i < b.length; i++) b[i].className = 'btn' + (i === S.focus ? ' focus' : '');
+  }
+  function showSetup(err) {
+    var h = '<div class="k">drift · late-night specimen viewer</div><h1>Drift</h1>' +
+      '<p>Slow visuals for whatever you play on Spotify. Nothing ever stands still, so your OLED stays healthy.</p>' +
+      (err ? '<p class="err">' + esc(err) + '</p>' : '');
+    if (!cid) {
+      h += '<p>Paste your Spotify app’s Client ID:</p><input id="cidIn" class="mono" placeholder="client id" spellcheck="false">' +
+        '<div class="m" style="margin-top:.8em">Redirect URI to add in the Spotify dashboard:<br>' + esc(REDIRECT) + '</div>' +
+        '<span class="btn" data-act="savecid">Save</span><span class="btn" data-act="demo">Watch demo</span>';
+    } else {
+      h += '<span class="btn" data-act="login">Connect Spotify</span><span class="btn" data-act="demo">Watch demo</span>' +
+        '<div class="m" style="margin-top:1em;color:var(--faint)">redirect uri: ' + esc(REDIRECT) + '</div>';
+    }
+    setPanel('setup', h);
+  }
+  function helpHTML() {
+    var sp = speaker.state === 'ready' ? 'ready — pick “Drift” in Spotify on your phone'
+      : speaker.state === 'loading' ? 'starting…'
+      : speaker.state === 'fail' ? 'not available here (' + speaker.msg + ')'
+      : speaker.state === 'offline' ? 'offline' : (speaker.msg || 'off');
+    return '<div class="k">drift · remote</div><h1>Controls</h1><table>' +
+      '<tr><td>OK</td><td>play / pause</td></tr>' +
+      '<tr><td>◀ ▶</td><td>change scene (' + esc(SCENES[S.scene].name) + ')</td></tr>' +
+      '<tr><td>▲ ▼</td><td>brightness (' + Math.round(S.userDim * 100) + '%)</td></tr>' +
+      '<tr><td>RED</td><td>hide / show the card</td></tr>' +
+      '<tr><td>GREEN</td><td>lyrics on / off</td></tr>' +
+      '<tr><td>YELLOW · BLUE</td><td>previous · next track</td></tr>' +
+      '<tr><td>INFO</td><td>this help</td></tr></table>' +
+      '<div class="m" style="margin-top:.8em">speaker: ' + esc(sp) + '<br>render ' + Math.round(scale * 100) + '% · ' + Math.round(fpsNow) + ' fps' +
+      (DEMO ? ' · demo mode' : '') + '</div>';
+  }
+  function showHelp(ms) {
+    setPanel('help', helpHTML());
+    clearTimeout(panelT); panelT = setTimeout(function () { if (S.panel === 'help') setPanel(null, ''); }, ms || 12000);
+  }
+  function refreshPanel() { if (S.panel === 'help') { panel.innerHTML = helpHTML(); } }
+  function panelAct(act) {
+    if (act === 'login') login();
+    else if (act === 'demo') { location.href = REDIRECT + '?demo'; }
+    else if (act === 'savecid') {
+      var v = ($('cidIn') && $('cidIn').value || '').trim();
+      if (!/^[0-9a-f]{32}$/i.test(v)) { showSetup('That doesn’t look like a Client ID (32 letters/numbers).'); return; }
+      LS.set('cid', v); cid = v; showSetup();
+    }
+  }
+  panel.addEventListener('click', function (e) {
+    var el = e.target;
+    while (el && el !== panel && !(el.getAttribute && el.getAttribute('data-act'))) el = el.parentNode;
+    if (el && el !== panel) { e.stopPropagation(); panelAct(el.getAttribute('data-act')); }
+  });
+
+  /* ======================================================================
+     Input: LG Magic Remote + keyboard
+     ====================================================================== */
+  var firstGesture = true;
+  function onGesture() {
+    keepPlay();
+    if (firstGesture) {
+      firstGesture = false;
+      var el = document.documentElement, f = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (f && !(document.fullscreenElement || document.webkitFullscreenElement)) { try { var p = f.call(el); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+    }
+    if (player && player.activateElement) { try { player.activateElement(); } catch (e) {} }
+  }
+  document.addEventListener('keydown', function (e) {
+    var c = e.keyCode, key = (e.key || '').toLowerCase();
+    var typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+    onGesture();
+    if (S.panel === 'setup') {
+      var n = panel.querySelectorAll('.btn').length;
+      if (typing && c !== 13 && c !== 40 && c !== 38) return;
+      if (c === 37 || c === 38) { S.focus = (S.focus + n - 1) % n; markFocus(); if (typing) document.activeElement.blur(); e.preventDefault(); }
+      else if (c === 39 || c === 40) { S.focus = (S.focus + 1) % n; markFocus(); if (typing) document.activeElement.blur(); e.preventDefault(); }
+      else if (c === 13) { var b = panel.querySelectorAll('.btn')[S.focus]; if (b) panelAct(b.getAttribute('data-act')); e.preventDefault(); }
+      return;
+    }
+    if (typing) return;
+    var handled = true;
+    if (c === 13 || c === 32 || c === 415 || c === 19) togglePlay();
+    else if (c === 37) goScene((S.switching ? S.pending : S.scene) - 1);
+    else if (c === 39) goScene((S.switching ? S.pending : S.scene) + 1);
+    else if (c === 38 || c === 40) {
+      S.userDim = clamp(Math.round((S.userDim + (c === 38 ? 0.15 : -0.15)) * 100) / 100, 0.25, 1);
+      LS.set('dim', S.userDim); toast('Brightness ' + Math.round(S.userDim * 100) + '%');
+    }
+    else if (c === 403 || key === 'c') { S.showCard = !S.showCard; LS.set('card', S.showCard ? '1' : '0'); updateCardVis(); toast(S.showCard ? 'Card on' : 'Card off'); }
+    else if (c === 404 || key === 'l') { S.showLyrics = !S.showLyrics; LS.set('lyrics', S.showLyrics ? '1' : '0'); toast(S.showLyrics ? 'Lyrics on' : 'Lyrics off'); }
+    else if (c === 405 || key === 'p' || c === 412) skip(-1);
+    else if (c === 406 || key === 'n' || c === 417) skip(1);
+    else if (c === 457 || key === 'h' || key === 'i') { if (S.panel === 'help') setPanel(null, ''); else showHelp(); }
+    else if (c === 461 || c === 27) { if (S.panel) setPanel(null, ''); else handled = false; }
+    else if (key === 'f') onGesture();
+    else handled = false;
+    if (handled) e.preventDefault();
+  });
+  var curT = null;
+  document.addEventListener('mousemove', function () {
+    document.body.className = 'pointer'; clearTimeout(curT);
+    curT = setTimeout(function () { document.body.className = ''; }, 3000);
+  });
+  document.addEventListener('click', function () { onGesture(); });
+
+  /* ======================================================================
+     Demo mode: invented tracks + generated covers (no Spotify needed)
+     ====================================================================== */
+  var demo = (function () {
+    var TR = [
+      { title: 'Velvet Static', artist: 'Low Orbit Choir', album: 'Night Bus Liturgy', year: '2019', hue: .78, genres: ['dream pop', 'slowcore'],
+        words: ['the bus is warm and nobody talks', 'orange lights count us down', '', 'I left my name on the window', 'it fogged and it was gone', 'velvet static in my teeth', '', 'say it slower', 'say it like the radio'] },
+      { title: 'Saltwater Cathedral', artist: 'Mirela & the Undertow', album: 'Pressure Hymns', year: '2022', hue: .52, genres: ['ambient techno'],
+        words: ['down here the bells are quiet', 'blue as a closed eye', '', 'we build rooms out of echo', 'and live in them for a while', '', 'hold your breath', 'hold it like a secret'] },
+      { title: 'Ember Index', artist: 'KAIROS 9', album: 'Heat Death (Deluxe)', year: '2017', hue: .03, genres: ['darkwave', 'industrial'],
+        words: ['every lamp in the city', 'counting backwards', '', 'feed the fire a little louder', 'it remembers what we said', '', 'ember, ember', 'index of the dark'] },
+      { title: 'Moss Telephone', artist: 'Juniper Ghostline', album: 'Green Room Static', year: '2024', hue: .3, genres: ['psych folk'],
+        words: ['ring once if you can hear me', 'ring twice if you are the forest', '', 'the line is soft and slow', 'something growing in the wires', '', 'hello', 'hello from under the leaves'] }
+    ];
+    var DUR = 80000, i = 0, start = Date.now(), pausedAt = 0, playing = true;
+    function rnd(seed) { return function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+    function cover(tr, k) {
+      var c = document.createElement('canvas'); c.width = c.height = 320; var x = c.getContext('2d'), r = rnd(k * 7919 + 13);
+      function hsl(h, s, l, a) { return 'hsla(' + Math.round(((h % 1) + 1) % 1 * 360) + ',' + Math.round(s * 100) + '%,' + Math.round(l * 100) + '%,' + a + ')'; }
+      x.fillStyle = hsl(tr.hue, .5, .07, 1); x.fillRect(0, 0, 320, 320);
+      for (var n = 0; n < 7; n++) {
+        var cx = r() * 320, cy = r() * 320, rad = 60 + r() * 170, g = x.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        g.addColorStop(0, hsl(tr.hue + (r() - .5) * .25, .7, .35 + r() * .3, .9)); g.addColorStop(1, hsl(tr.hue, .6, .2, 0));
+        x.fillStyle = g; x.fillRect(0, 0, 320, 320);
+      }
+      x.strokeStyle = hsl(tr.hue + .5, .6, .7, .5); x.lineWidth = 2;
+      x.beginPath(); x.arc(160 + (r() - .5) * 80, 160 + (r() - .5) * 80, 40 + r() * 70, 0, TAU); x.stroke();
+      for (n = 0; n < 9; n++) { x.fillStyle = hsl(tr.hue + .45, .5, .8, .07); x.fillRect(0, r() * 320, 320, 1 + r() * 3); }
+      return c.toDataURL('image/jpeg', .9);
+    }
+    TR.forEach(function (tr, k) {
+      tr.cover = cover(tr, k + 1); tr.id = 'demo' + k; tr.duration = DUR; tr.isEpisode = false;
+      tr.lyrics = tr.words.map(function (w, j) { return { t: 3000 + j * 7000, text: w }; });
+    });
+    function pos() { return playing ? Date.now() - start : pausedAt; }
+    function push() {
+      if (pos() >= DUR) { i = (i + 1) % TR.length; start = Date.now(); }
+      var tr = TR[i];
+      S.progress = pos(); S.fetchedAt = Date.now(); S.duration = DUR; S.playing = playing;
+      if (!S.track || S.track.id !== tr.id) { S.track = tr; onTrack(tr); }
+      setMode(playing ? 'playing' : 'paused');
+    }
+    return {
+      start: function () { push(); setInterval(push, 1000); },
+      toggle: function () { if (playing) { pausedAt = pos(); playing = false; } else { start = Date.now() - pausedAt; playing = true; } toast(playing ? 'Play' : 'Pause'); push(); },
+      skip: function (d) { i = (i + d + TR.length) % TR.length; start = Date.now(); playing = true; push(); }
+    };
+  })();
+
+  /* ======================================================================
+     Boot
+     ====================================================================== */
+  initGL();
+  S.pending = S.scene; S.fade = 0;
+  requestAnimationFrame(frame);
+  keepPlay();
+
+  function boot() {
+    if (DEMO) { demo.start(); showHelp(9000); return; }
+    var code = Q.get('code'), err = Q.get('error');
+    if (code || err || Q.has('cid') || Q.has('reset')) history.replaceState(null, '', REDIRECT);
+    if (err) { showSetup('Spotify said: ' + err); return; }
+    if (code) {
+      if (Q.get('state') !== LS.get('state')) { showSetup('Login check failed (state mismatch). Try again.'); return; }
+      tokenReq({ grant_type: 'authorization_code', code: code, redirect_uri: REDIRECT, client_id: cid, code_verifier: LS.get('pkce') || '' })
+        .then(function (d) { saveTok(d); LS.del('pkce'); LS.del('state'); start(true); })
+        .catch(function (e) { showSetup('Login failed: ' + e.message); });
+      return;
+    }
+    if (tok.refresh && cid) start(false); else showSetup();
+  }
+  function start(fresh) {
+    setPanel(null, '');
+    poll();
+    startSpeaker();
+    if (fresh) showHelp(15000);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
